@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="admin-save-bar">
+    <button id="save-settings-btn" class="save-btn">Enregistrer la configuration</button>
+    <span id="settings-dirty-hint" class="muted">Configuration sauvegardee</span>
+  </div>
+  <h2>Administration des noeuds</h2>
+  <p id="meshcore-server-status" class="muted">Etat MeshCore USB: inconnu</p>
+  <div class="row gap">
+    <label>
+      Port MeshCore
+      <select id="meshcore-port"></select>
+    </label>
+    <button id="connect-port-btn">Se connecter</button>
+    <span id="port-status" class="muted">Aucune connexion</span>
+    <button id="discover-btn">Detecter les noeuds USB/Mesh</button>
+    <label>
+      Frequence de lecture (secondes)
+      <input id="poll-interval" type="number" min="5" max="3600">
+    </label>
+    <label>
+      Repeater login (source)
+      <input id="repeater-login-node" type="text" placeholder="ex: NODE_TEMP_1">
+    </label>
+    <label>
+      Mot de passe repeater
+      <input id="repeater-password" type="password" placeholder="ex: butter">
+    </label>
+    <label>
+      Jauge Temp Sonde min
+      <input id="gauge-temp-min" type="number" step="0.1">
+    </label>
+    <label>
+      Jauge Temp Sonde max
+      <input id="gauge-temp-max" type="number" step="0.1">
+    </label>
+  </div>
+</section>
+
+<section id="mqtt-card" class="panel">
+  <h3>Envoi MQTT</h3>
+  <label class="toggle-inline">
+    <input id="mqtt-enabled" type="checkbox">
+    Activer l'envoi des donnees vers MQTT
+  </label>
+  <div id="mqtt-config-fields" class="row gap">
+    <label>
+      Serveur MQTT
+      <input id="mqtt-host" type="text" placeholder="ex: 192.168.1.20">
+    </label>
+    <label>
+      Port MQTT
+      <input id="mqtt-port" type="number" min="1" max="65535" placeholder="1883">
+    </label>
+    <label>
+      Topic MQTT
+      <input id="mqtt-topic" type="text" placeholder="ex: opencompost/mesures">
+    </label>
+    <label>
+      Utilisateur MQTT
+      <input id="mqtt-username" type="text" placeholder="optionnel">
+    </label>
+    <label>
+      Mot de passe MQTT
+      <input id="mqtt-password" type="password" placeholder="optionnel">
+    </label>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>Noeuds detectes</h3>
+  <div id="nodes-admin"></div>
+</section>
+
+<script src="/static/admin.js"></script>
+{% endblock %}

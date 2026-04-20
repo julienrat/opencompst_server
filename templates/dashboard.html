@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Vue temps reel des composts</h2>
+  <p class="muted">Mesures des noeuds actifs (temperature + batterie).</p>
+</section>
+<section id="node-grid" class="card-grid"></section>
+<div id="chart-modal" class="modal-backdrop hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="modal-title">Detail temperature</h3>
+      <button id="modal-close-btn" class="modal-close-btn">Fermer</button>
+    </div>
+    <div class="modal-controls">
+      <label>
+        Debut
+        <input id="modal-start" type="text" placeholder="Choisir date/heure debut">
+      </label>
+      <label>
+        Fin
+        <input id="modal-end" type="text" placeholder="Choisir date/heure fin">
+      </label>
+      <button id="modal-apply-btn">Appliquer</button>
+      <button id="modal-export-btn">Exporter CSV</button>
+    </div>
+    <div id="modal-chart" class="modal-chart"></div>
+  </div>
+</div>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/fr.js"></script>
+<script src="/static/dashboard.js"></script>
+{% endblock %}

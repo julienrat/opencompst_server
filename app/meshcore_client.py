@@ -1,0 +1,421 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import subprocess
+from datetime import datetime, timezone
+from typing import Any
+
+
+class MeshcoreClient:
+    def __init__(self, binary: str = "meshcore-cli") -> None:
+        self.binary = binary
+        self.port: str | None = None
+        self.connected: bool = False
+        self.last_error: str = ""
+        self.last_ok_at: str = ""
+        self.last_attempt_at: str = ""
+        self.reconnect_attempts: int = 0
+
+    def set_port(self, port: str | None) -> None:
+        self.port = port or None
+        self.connected = False
+        self.last_error = ""
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "connected": self.connected,
+            "port": self.port,
+            "last_error": self.last_error,
+            "last_ok_at": self.last_ok_at,
+            "last_attempt_at": self.last_attempt_at,
+            "reconnect_attempts": self.reconnect_attempts,
+        }
+
+    def mark_disconnected(self, message: str = "USB deconnecte") -> None:
+        self.connected = False
+        self.last_error = message
+
+    def _prefix(self) -> str:
+        if self.port:
+            return f"{self.binary} -s {shlex.quote(self.port)}"
+        env_port = os.getenv("MESHCORE_PORT")
+        if env_port:
+            return f"{self.binary} -s {shlex.quote(env_port)}"
+        return self.binary
+
+    def _run_json(self, command: str, timeout: int = 10) -> Any:
+        completed = subprocess.run(
+            shlex.split(command),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if completed.returncode != 0:
+            self.connected = False
+            self.last_error = completed.stderr.strip() or "meshcore-cli failed"
+            raise RuntimeError(self.last_error)
+        output = completed.stdout.strip()
+        if not output:
+            return {}
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            # La CLI peut imprimer des logs INFO avant le JSON.
+            extracted = self._extract_json_from_output(output)
+            if extracted is None:
+                raise
+            return extracted
+
+    def _run_text(self, command: str, timeout: int = 10) -> str:
+        completed = subprocess.run(
+            shlex.split(command),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if completed.returncode != 0:
+            self.connected = False
+            self.last_error = completed.stderr.strip() or "meshcore-cli failed"
+            raise RuntimeError(self.last_error)
+        return completed.stdout
+
+    def ensure_connection(self, preferred_port: str | None = None) -> bool:
+        """Auto-reconnect to preferred USB port, then fallback to detected ports."""
+        if preferred_port and preferred_port != self.port:
+            self.set_port(preferred_port)
+        if not self.port and preferred_port:
+            self.port = preferred_port
+
+        # Pas de verification agressive si deja connecte sur le bon port.
+        if self.connected and self.port:
+            if preferred_port is None or preferred_port == self.port:
+                return True
+
+        now = datetime.now(timezone.utc).isoformat()
+        self.last_attempt_at = now
+        self.reconnect_attempts += 1
+
+        candidate_ports: list[str] = []
+        if self.port:
+            candidate_ports.append(self.port)
+        for p in self.list_devices():
+            if p not in candidate_ports:
+                candidate_ports.append(p)
+
+        if not candidate_ports:
+            self.connected = False
+            self.last_error = "Aucun port USB meshcore detecte"
+            return False
+
+        for candidate in candidate_ports:
+            self.port = candidate
+            if self.test_connection():
+                self.connected = True
+                self.last_error = ""
+                self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                return True
+
+        self.connected = False
+        if not self.last_error:
+            self.last_error = "Impossible de se reconnecter au meshcore USB"
+        return False
+
+    def discover_nodes(self) -> list[dict[str, str]]:
+        prefix = self._prefix()
+        # Commande valide fournie: meshcli -s /dev/ttyACM0 lc
+        for cmd in (f"{prefix} lc", f"{prefix} contacts"):
+            try:
+                output = self._run_text(cmd, timeout=15)
+                nodes = self._parse_contacts_text(output)
+                if nodes:
+                    self.connected = True
+                    self.last_error = ""
+                    self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                    return nodes
+            except Exception:
+                continue
+        return []
+
+    def read_telemetry(
+        self,
+        mesh_id: str,
+        node_type: str = "CLI",
+        repeater_login_node: str | None = None,
+        repeater_password: str | None = None,
+    ) -> dict[str, float | None]:
+        prefix = self._prefix()
+        ids = self._candidate_node_ids(mesh_id)
+        node_kind = (node_type or "CLI").upper()
+
+        attempts: list[str] = []
+        if node_kind == "REP":
+            login_node = (repeater_login_node or "").strip()
+            password = (repeater_password or "").strip()
+            if login_node and password:
+                q_login = shlex.quote(login_node)
+                q_pwd = shlex.quote(password)
+                attempts.extend([f"{prefix} login {q_login} {q_pwd} rt {nid}" for nid in ids])
+
+        attempts.extend([f"{prefix} req_telemetry {nid}" for nid in ids])
+        attempts.extend([f"{prefix} -j req_telemetry {nid}" for nid in ids])
+
+        for cmd in attempts:
+            try:
+                payload = self._run_json(cmd)
+                parsed = self._parse_telemetry(payload)
+                if any(v is not None for v in parsed.values()):
+                    self.connected = True
+                    self.last_error = ""
+                    self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                    return parsed
+            except Exception:
+                continue
+        # Pas de mesure disponible pour ce noeud (pas forcement une erreur bloquante).
+        return {
+            "temperature_external_c": None,
+            "temperature_internal_c": None,
+            "battery_v": None,
+            "battery_pct": None,
+        }
+
+    def list_devices(self) -> list[str]:
+        """List available BLE/serial devices via meshcore-cli -l."""
+        attempts = [
+            f"{self.binary} -l",
+            f"{self.binary} -l -T 3",
+        ]
+        for cmd in attempts:
+            try:
+                completed = subprocess.run(
+                    shlex.split(cmd),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                if completed.returncode != 0:
+                    continue
+                return self._parse_devices_output(completed.stdout)
+            except Exception:
+                continue
+        return []
+
+    def test_connection(self) -> bool:
+        """Try light commands to validate selected USB link."""
+        prefix = self._prefix()
+        attempts = [
+            # Commandes reelles connues comme stables sur ton setup.
+            f"{prefix} lc",
+            f"{prefix} contacts",
+            # Fallback JSON eventuel selon version firmware/CLI.
+            f"{prefix} -j infos",
+        ]
+        for cmd in attempts:
+            try:
+                if " -j " in cmd:
+                    self._run_json(cmd, timeout=12)
+                else:
+                    self._run_text(cmd, timeout=12)
+                self.connected = True
+                self.last_error = ""
+                self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                return True
+            except Exception:
+                continue
+        self.connected = False
+        if not self.last_error:
+            self.last_error = "Echec test connexion USB meshcore"
+        return False
+
+    def _parse_devices_output(self, output: str) -> list[str]:
+        devices: list[str] = []
+        for line in output.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Typical serial Linux names.
+            if "/dev/ttyUSB" in stripped or "/dev/ttyACM" in stripped or "/dev/serial/" in stripped:
+                parts = stripped.split()
+                for part in parts:
+                    if part.startswith("/dev/"):
+                        devices.append(part)
+                        break
+        # De-duplicate while preserving order.
+        seen = set()
+        unique = []
+        for d in devices:
+            if d not in seen:
+                seen.add(d)
+                unique.append(d)
+        return unique
+
+    def _parse_telemetry(self, payload: Any) -> dict[str, float | None]:
+        if isinstance(payload, dict):
+            lpp = payload.get("lpp")
+            if isinstance(lpp, list):
+                from_lpp = self._parse_lpp(lpp)
+                if any(v is not None for v in from_lpp.values()):
+                    return from_lpp
+
+        # Extrait des valeurs meme dans des payloads imbriques.
+        candidates = self._flatten_values(payload) if isinstance(payload, (dict, list)) else {}
+
+        temperature = (
+            candidates.get("temperature_c")
+            or candidates.get("temperature")
+            or candidates.get("temp")
+            or candidates.get("sensor_temperature")
+            or candidates.get("temperaturec")
+            or candidates.get("air_temperature")
+        )
+        battery_v = (
+            candidates.get("battery_v")
+            or candidates.get("battery_voltage")
+            or candidates.get("battery")
+            or candidates.get("voltage")
+            or candidates.get("batt_v")
+        )
+        battery_pct = (
+            candidates.get("battery_pct")
+            or candidates.get("battery_percent")
+            or candidates.get("battery_percentage")
+            or candidates.get("batt_pct")
+        )
+
+        try:
+            temperature = float(temperature) if temperature is not None else None
+        except (TypeError, ValueError):
+            temperature = None
+        try:
+            battery_v = float(battery_v) if battery_v is not None else None
+        except (TypeError, ValueError):
+            battery_v = None
+        try:
+            battery_pct = float(battery_pct) if battery_pct is not None else None
+        except (TypeError, ValueError):
+            battery_pct = None
+
+        return {
+            "temperature_external_c": temperature,
+            "temperature_internal_c": None,
+            "battery_v": battery_v,
+            "battery_pct": battery_pct,
+        }
+
+    def _parse_lpp(self, lpp: list[Any]) -> dict[str, float | None]:
+        temperatures: list[float] = []
+        result = {
+            "temperature_external_c": None,
+            "temperature_internal_c": None,
+            "battery_v": None,
+            "battery_pct": None,
+        }
+        for item in lpp:
+            if not isinstance(item, dict):
+                continue
+            typ = str(item.get("type", "")).strip().lower()
+            value = item.get("value")
+            try:
+                num_value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if typ == "temperature":
+                temperatures.append(num_value)
+            elif typ == "voltage":
+                result["battery_v"] = num_value
+        if temperatures:
+            # Convention demandee:
+            # 1ere temperature = capteur exterieur, 2eme = boitier.
+            result["temperature_external_c"] = temperatures[0]
+            if len(temperatures) > 1:
+                result["temperature_internal_c"] = temperatures[1]
+        # Estimation du pourcentage batterie Li-ion 1S.
+        if result["battery_v"] is not None:
+            v = result["battery_v"]
+            pct = (v - 3.2) / (4.2 - 3.2) * 100.0
+            result["battery_pct"] = max(0.0, min(100.0, round(pct, 1)))
+        return result
+
+    def _candidate_node_ids(self, mesh_id: str) -> list[str]:
+        raw = str(mesh_id).strip()
+        variants = [raw, raw.lower(), raw.upper()]
+        if raw.upper().startswith("0X"):
+            variants.append(raw[2:])
+        else:
+            variants.append(f"0x{raw}")
+        unique: list[str] = []
+        for v in variants:
+            quoted = shlex.quote(v)
+            if quoted not in unique:
+                unique.append(quoted)
+        return unique
+
+    def _flatten_values(self, payload: Any) -> dict[str, Any]:
+        flat: dict[str, Any] = {}
+
+        def walk(obj: Any) -> None:
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    normalized = str(key).strip().lower().replace(" ", "_")
+                    if normalized not in flat and isinstance(value, (str, int, float)):
+                        flat[normalized] = value
+                    walk(value)
+            elif isinstance(obj, list):
+                for item in obj:
+                    walk(item)
+
+        walk(payload)
+        return flat
+
+    def _extract_json_from_output(self, output: str) -> Any | None:
+        start_obj = output.find("{")
+        start_arr = output.find("[")
+        starts = [i for i in (start_obj, start_arr) if i >= 0]
+        if not starts:
+            return None
+        start = min(starts)
+        end_obj = output.rfind("}")
+        end_arr = output.rfind("]")
+        end = max(end_obj, end_arr)
+        if end < start:
+            return None
+        candidate = output[start : end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+
+    def _parse_contacts_text(self, output: str) -> list[dict[str, str]]:
+        nodes: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for line in output.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Ignore metadata lines.
+            if stripped.startswith("INFO:") or stripped.startswith(">"):
+                continue
+
+            # Formats:
+            # SONDE3A      CLI   ... Flood
+            # NODE_TEMP    REP   ... 0 hop
+            m = re.match(r"^(\S+)\s+(CLI|REP)\b", stripped)
+            if m:
+                contact_name = m.group(1).strip()
+                node_type = m.group(2).strip().upper()
+                if contact_name and contact_name not in seen:
+                    seen.add(contact_name)
+                    nodes.append({"mesh_id": contact_name, "name": contact_name, "node_type": node_type})
+                continue
+
+            # Fallback: first token as contact-like name.
+            first = stripped.split()[0]
+            if first and first not in seen:
+                seen.add(first)
+                nodes.append({"mesh_id": first, "name": first, "node_type": "CLI"})
+        return nodes
