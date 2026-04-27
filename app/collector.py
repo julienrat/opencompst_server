@@ -43,13 +43,19 @@ class TelemetryCollector:
     async def _loop(self) -> None:
         while self._running:
             try:
-                await self.collect_once()
+                # On exécute la collecte dans un thread séparé pour ne pas
+                # geler l'interface web (FastAPI) pendant les appels CLI.
+                await asyncio.to_thread(self.collect_sync)
             except Exception as exc:
                 logger.exception("Collector cycle failed: %s", exc)
             interval = max(5, int(get_setting("poll_interval_seconds", "60")))
             await asyncio.sleep(interval)
 
-    async def collect_once(self) -> None:
+    def collect_sync(self) -> None:
+        """
+        Version synchrone de la collecte pour exécution en thread.
+        Regroupe toute la logique d'interrogation et de stockage.
+        """
         preferred_port = get_setting("meshcore_port", "")
         if not self.client.ensure_connection(preferred_port=preferred_port or None):
             logger.warning("MeshCore USB indisponible: %s", self.client.status().get("last_error"))
@@ -77,6 +83,7 @@ class TelemetryCollector:
                     temperature_internal_c=data.get("temperature_internal_c"),
                     battery_v=data.get("battery_v"),
                     battery_pct=data.get("battery_pct"),
+                    signal_rssi=data.get("signal_rssi"),
                 )
                 node_name = (node.get("name") or "").strip() or mesh_id
                 mqtt_nodes_payload[node_name] = {

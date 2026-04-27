@@ -152,36 +152,66 @@ class MeshcoreClient:
         ids = self._candidate_node_ids(mesh_id)
         node_kind = (node_type or "CLI").upper()
 
-        attempts: list[str] = []
+        parsed = {
+            "temperature_external_c": None,
+            "temperature_internal_c": None,
+            "battery_v": None,
+            "battery_pct": None,
+            "signal_rssi": None,
+        }
+
+        # 1. Tentatives de Telemetrie (RT)
+        rt_attempts: list[str] = []
         if node_kind == "REP":
             login_node = (repeater_login_node or "").strip()
             password = (repeater_password or "").strip()
             if login_node and password:
                 q_login = shlex.quote(login_node)
                 q_pwd = shlex.quote(password)
-                attempts.extend([f"{prefix} login {q_login} {q_pwd} rt {nid}" for nid in ids])
+                rt_attempts.extend([f"{prefix} login {q_login} {q_pwd} rt {nid}" for nid in ids])
 
-        attempts.extend([f"{prefix} req_telemetry {nid}" for nid in ids])
-        attempts.extend([f"{prefix} -j req_telemetry {nid}" for nid in ids])
+        rt_attempts.extend([f"{prefix} req_telemetry {nid}" for nid in ids])
+        rt_attempts.extend([f"{prefix} -j req_telemetry {nid}" for nid in ids])
 
-        for cmd in attempts:
+        for cmd in rt_attempts:
             try:
                 payload = self._run_json(cmd)
-                parsed = self._parse_telemetry(payload)
-                if any(v is not None for v in parsed.values()):
-                    self.connected = True
-                    self.last_error = ""
-                    self.last_ok_at = datetime.now(timezone.utc).isoformat()
-                    return parsed
+                data = self._parse_telemetry(payload)
+                if any(v is not None for v in data.values()):
+                    parsed.update({k: v for k, v in data.items() if v is not None})
+                    break
             except Exception:
                 continue
-        # Pas de mesure disponible pour ce noeud (pas forcement une erreur bloquante).
-        return {
-            "temperature_external_c": None,
-            "temperature_internal_c": None,
-            "battery_v": None,
-            "battery_pct": None,
-        }
+
+        # 2. Tentatives de Signal (RS) si le RSSI est manquant
+        if parsed["signal_rssi"] is None:
+            rs_attempts: list[str] = []
+            if node_kind == "REP" and repeater_login_node and repeater_password:
+                q_login = shlex.quote(repeater_login_node.strip())
+                q_pwd = shlex.quote(repeater_password.strip())
+                rs_attempts.extend([f"{prefix} login {q_login} {q_pwd} rs {nid}" for nid in ids])
+            
+            rs_attempts.extend([f"{prefix} rs {nid}" for nid in ids])
+            rs_attempts.extend([f"{prefix} -j rs {nid}" for nid in ids])
+
+            for cmd in rs_attempts:
+                try:
+                    # On utilise _run_text car rs renvoie souvent juste un nombre ou "RSSI: -85"
+                    output = self._run_text(cmd)
+                    sig_data = self._parse_telemetry(output)
+                    if sig_data["signal_rssi"] is not None:
+                        parsed["signal_rssi"] = sig_data["signal_rssi"]
+                        break
+                except Exception:
+                    continue
+
+        if any(v is not None for v in parsed.values()):
+            self.connected = True
+            self.last_error = ""
+            self.last_ok_at = datetime.now(timezone.utc).isoformat()
+            return parsed
+
+        return parsed
 
     def list_devices(self) -> list[str]:
         """List available BLE/serial devices via meshcore-cli -l."""
@@ -218,9 +248,9 @@ class MeshcoreClient:
         for cmd in attempts:
             try:
                 if " -j " in cmd:
-                    self._run_json(cmd, timeout=12)
+                    self._run_json(cmd, timeout=5)
                 else:
-                    self._run_text(cmd, timeout=12)
+                    self._run_text(cmd, timeout=5)
                 self.connected = True
                 self.last_error = ""
                 self.last_ok_at = datetime.now(timezone.utc).isoformat()
@@ -255,6 +285,36 @@ class MeshcoreClient:
         return unique
 
     def _parse_telemetry(self, payload: Any) -> dict[str, float | None]:
+        # Cas où payload est déjà un nombre (issu d'une commande rs propre)
+        if isinstance(payload, (int, float)):
+            return {
+                "temperature_external_c": None,
+                "temperature_internal_c": None,
+                "battery_v": None,
+                "battery_pct": None,
+                "signal_rssi": int(payload),
+            }
+
+        # Support du texte brut (ex: logs + JSON ou "RSSI: -85")
+        if isinstance(payload, str):
+            # On tente d'extraire le JSON si la CLI a bavardé (comme dans ton exemple)
+            extracted = self._extract_json_from_output(payload)
+            if extracted is not None:
+                return self._parse_telemetry(extracted)
+
+            # Sinon on cherche un pattern spécifique pour ne pas prendre les chiffres des logs
+            m = re.search(r"(?:rssi|last_rssi|signal)[:\s]*(-?\d+)", payload, re.IGNORECASE)
+            if not m:
+                m = re.search(r"(-?\d+)", payload)
+
+            return {
+                "temperature_external_c": None,
+                "temperature_internal_c": None,
+                "battery_v": None,
+                "battery_pct": None,
+                "signal_rssi": int(m.group(1)) if m else None,
+            }
+
         if isinstance(payload, dict):
             lpp = payload.get("lpp")
             if isinstance(lpp, list):
@@ -286,6 +346,13 @@ class MeshcoreClient:
             or candidates.get("battery_percentage")
             or candidates.get("batt_pct")
         )
+        signal_rssi = (
+            candidates.get("last_rssi")
+            or candidates.get("rssi")
+            or candidates.get("signal")
+            or candidates.get("last_snr")
+            or candidates.get("snr")
+        )
 
         try:
             temperature = float(temperature) if temperature is not None else None
@@ -299,12 +366,17 @@ class MeshcoreClient:
             battery_pct = float(battery_pct) if battery_pct is not None else None
         except (TypeError, ValueError):
             battery_pct = None
+        try:
+            signal_rssi = int(float(signal_rssi)) if signal_rssi is not None else None
+        except (TypeError, ValueError):
+            signal_rssi = None
 
         return {
             "temperature_external_c": temperature,
             "temperature_internal_c": None,
             "battery_v": battery_v,
             "battery_pct": battery_pct,
+            "signal_rssi": signal_rssi,
         }
 
     def _parse_lpp(self, lpp: list[Any]) -> dict[str, float | None]:
@@ -314,6 +386,7 @@ class MeshcoreClient:
             "temperature_internal_c": None,
             "battery_v": None,
             "battery_pct": None,
+            "signal_rssi": None,
         }
         for item in lpp:
             if not isinstance(item, dict):

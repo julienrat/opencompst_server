@@ -7,6 +7,7 @@ async function fetchJson(url, options = {}) {
 }
 
 let savedSettingsSnapshot = "";
+let savedNodesOrderSnapshot = "";
 
 function fmtDate(iso) {
   if (!iso) return "N/A";
@@ -31,11 +32,24 @@ function collectSettingsFromForm() {
   };
 }
 
+function collectNodesOrder() {
+  const tbody = document.getElementById("nodes-tbody");
+  if (!tbody) return "";
+  const rows = tbody.querySelectorAll("tr[data-node-id]");
+  return Array.from(rows).map((row) => row.dataset.nodeId).join(",");
+}
+
 function updateSaveButtonState() {
   const saveBtn = document.getElementById("save-settings-btn");
   const hint = document.getElementById("settings-dirty-hint");
-  const current = JSON.stringify(collectSettingsFromForm());
-  const isDirty = current !== savedSettingsSnapshot;
+  
+  const currentSettings = JSON.stringify(collectSettingsFromForm());
+  const currentOrder = collectNodesOrder();
+  
+  const isSettingsDirty = currentSettings !== savedSettingsSnapshot;
+  const isOrderDirty = currentOrder !== savedNodesOrderSnapshot;
+  const isDirty = isSettingsDirty || isOrderDirty;
+
   saveBtn.classList.toggle("save-btn-dirty", isDirty);
   saveBtn.classList.toggle("save-btn-clean", !isDirty);
   hint.textContent = isDirty ? "Modifications non sauvegardees" : "Configuration sauvegardee";
@@ -58,10 +72,11 @@ async function refreshNodes() {
 
   container.innerHTML = `
     <table>
-      <thead><tr><th>ID</th><th>Type</th><th>Nom</th><th>Actif</th><th>Actions</th></tr></thead>
-      <tbody>
+      <thead><tr><th></th><th>ID</th><th>Type</th><th>Nom</th><th>Actif</th><th>Actions</th></tr></thead>
+      <tbody id="nodes-tbody">
       ${nodes.map((n) => `
-        <tr>
+        <tr data-node-id="${n.id}">
+          <td class="drag-handle">☰</td>
           <td>${n.mesh_id}</td>
           <td>${n.node_type || "CLI"}</td>
           <td><input data-name-id="${n.id}" value="${n.name ?? ""}" placeholder="Nom du noeud"></td>
@@ -103,6 +118,21 @@ async function refreshNodes() {
       refreshNodes().catch(console.error);
     });
   });
+  
+  savedNodesOrderSnapshot = collectNodesOrder();
+  updateSaveButtonState();
+
+  // Initialisation du tri sur le tableau des noeuds
+  const tbody = document.getElementById("nodes-tbody");
+  if (tbody && window.Sortable) {
+    new Sortable(tbody, {
+      handle: ".drag-handle",
+      animation: 150,
+      onEnd: () => {
+        updateSaveButtonState();
+      }
+    });
+  }
 }
 
 async function refreshSettings() {
@@ -187,12 +217,31 @@ document.getElementById("connect-port-btn").addEventListener("click", async () =
 
 document.getElementById("save-settings-btn").addEventListener("click", async () => {
   const payload = collectSettingsFromForm();
-  await fetchJson("/api/settings", {
+  
+  // Sauvegarde des reglages generaux
+  const p1 = fetchJson("/api/settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+
+  // Sauvegarde de l'ordre des noeuds
+  const tbody = document.getElementById("nodes-tbody");
+  const rows = tbody ? tbody.querySelectorAll("tr[data-node-id]") : [];
+  const orders = Array.from(rows).map((row, index) => ({
+    id: parseInt(row.dataset.nodeId),
+    order: index
+  }));
+  const p2 = fetchJson("/api/nodes/reorder", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(orders)
+  });
+
+  await Promise.all([p1, p2]);
+
   savedSettingsSnapshot = JSON.stringify(payload);
+  savedNodesOrderSnapshot = collectNodesOrder();
   updateSaveButtonState();
   refreshMeshcoreStatus().catch(console.error);
 });

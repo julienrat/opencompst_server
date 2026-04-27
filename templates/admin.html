@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .drag-handle { cursor: grab; color: #a6b1c2; padding: 0 10px; font-size: 1.2em; }
+  .drag-handle:active { cursor: grabbing; }
+  .sortable-chosen { background-color: rgba(255,255,255,0.05); }
+</style>
 <section class="panel">
   <div class="admin-save-bar">
     <button id="save-settings-btn" class="save-btn">Enregistrer la configuration</button>
@@ -73,5 +78,6 @@
   <div id="nodes-admin"></div>
 </section>
 
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script src="/static/admin.js"></script>
 {% endblock %}

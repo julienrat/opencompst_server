@@ -23,6 +23,7 @@ from .repository import (
     series_for_node,
     set_setting,
     update_node,
+    update_nodes_order,
     upsert_node,
 )
 
@@ -84,6 +85,12 @@ async def api_nodes(enabled_only: bool = False) -> list[dict]:
     return list_nodes(enabled_only=enabled_only)
 
 
+@app.put("/api/nodes/reorder")
+async def api_reorder_nodes(payload: list[dict[str, int]]) -> dict:
+    update_nodes_order(payload)
+    return {"status": "ok"}
+
+
 @app.post("/api/nodes/discover")
 async def api_discover_nodes() -> dict:
     discovered = meshcore.discover_nodes()
@@ -105,6 +112,11 @@ async def api_delete_node(node_id: int) -> dict:
     if not deleted:
         raise HTTPException(status_code=404, detail="Node not found")
     return {"deleted": True, "node_id": node_id}
+
+@app.put("/api/nodes/reorder")
+async def api_reorder_nodes(payload: list[dict[str, int]]) -> dict:
+    update_nodes_order(payload)
+    return {"status": "ok"}
 
 
 @app.get("/api/settings")
@@ -220,7 +232,7 @@ async def api_export_csv(
     output = StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=["measured_at", "temperature_external_c", "temperature_internal_c", "battery_v", "battery_pct"],
+        fieldnames=["measured_at", "temperature_external_c", "temperature_internal_c", "battery_v", "battery_pct", "signal_rssi"],
     )
     writer.writeheader()
     writer.writerows(rows)

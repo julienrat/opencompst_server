@@ -16,6 +16,7 @@ let gaugeSettings = {
   tempMin: -10,
   tempMax: 120
 };
+let isDragging = false;
 
 function gauge(divId, title, value, suffix, min, max, color) {
   Plotly.newPlot(divId, [{
@@ -212,11 +213,19 @@ async function openChartModalForNode(node) {
 }
 
 async function render() {
+  if (isDragging) return;
+
   const grid = document.getElementById("node-grid");
   const [latest, settings] = await Promise.all([
     fetchJson("/api/latest"),
     fetchJson("/api/settings")
   ]);
+
+  // On récupère toutes les séries en parallèle pour éviter de bloquer la boucle
+  const allSeries = await Promise.all(
+    latest.map(n => fetchJson(`/api/measurements/${n.node_id}?hours=24`))
+  );
+
   gaugeSettings.tempMin = Number(settings.gauge_temp_min ?? -10);
   gaugeSettings.tempMax = Number(settings.gauge_temp_max ?? 120);
   if (gaugeSettings.tempMin >= gaugeSettings.tempMax) {
@@ -225,9 +234,27 @@ async function render() {
   }
   grid.innerHTML = "";
 
-  for (const node of latest) {
+  latest.forEach((node, index) => {
     const card = document.createElement("article");
     card.className = "node-card";
+    card.dataset.nodeId = node.node_id;
+
+    const rssi = node.signal_rssi;
+    let sigText = "Signal inconnu";
+    let sigColor = "#a6b1c2"; // muted
+    if (rssi !== null && rssi !== undefined && !Number.isNaN(rssi)) {
+      if (rssi > -60) {
+        sigText = "Excellent / Fort";
+        sigColor = "#4caf50"; // Vert
+      } else if (rssi >= -75) {
+        sigText = "Correct / Moyen";
+        sigColor = "#ff9800"; // Orange
+      } else {
+        sigText = "Faible / Critique";
+        sigColor = "#f44336"; // Rouge
+      }
+    }
+
     const tempExtDiv = `temp-ext-${node.node_id}`;
     const miniChartDiv = `temp-mini-${node.node_id}`;
     card.innerHTML = `
@@ -236,10 +263,15 @@ async function render() {
           <h3>${node.label}</h3>
           <p class="node-metric-text"><strong>Temp boitier:</strong> ${valueText(node.temperature_internal_c, " C")}</p>
           <p class="node-metric-text"><strong>Batterie:</strong> ${valueText(node.battery_pct, " %")}</p>
+          <p class="node-metric-text"><strong>Signal:</strong> ${valueText(node.signal_rssi, " dBm")}</p>
+          <div class="node-metric-text" style="display: flex; align-items: center; gap: 6px; color: ${sigColor}; margin: 4px 0 8px 0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+            <span style="font-size: 0.85em; font-weight: 600;">${sigText}</span>
+          </div>
           <p class="node-metric-text node-metric-small muted"><strong>Derniere mise a jour:</strong><br>${dateText(node.measured_at)}</p>
         </div>
         <div class="node-card-middle">
-          <p class="muted chart-title">Evolution temperature ext.</p>
+          <p class="muted chart-title">température sonde</p>
           <div id="${miniChartDiv}" class="temp-mini-chart"></div>
         </div>
         <div class="node-card-right">
@@ -258,14 +290,14 @@ async function render() {
       gaugeSettings.tempMax,
       "#ff9f43"
     );
-    const series = await fetchJson(`/api/measurements/${node.node_id}?hours=24`);
-    const x = series.series.map((s) => s.measured_at);
-    const y = series.series.map((s) => s.temperature_external_c);
+    const series = allSeries[index];
+    const x = series.series.map(s => s.measured_at);
+    const y = series.series.map(s => s.temperature_external_c);
     miniTempChart(miniChartDiv, x, y);
     card.querySelector(".node-card-middle").addEventListener("click", () => {
       openChartModalForNode(node).catch(console.error);
     });
-  }
+  });
 }
 
 setupModalPickers();

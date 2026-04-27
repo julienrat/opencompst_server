@@ -24,10 +24,23 @@ def init_db() -> None:
             name TEXT,
             node_type TEXT NOT NULL DEFAULT 'CLI',
             enabled INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
+    # Migration simple pour ajouter la colonne sort_order si elle n'existe pas
+    try:
+        cursor.execute("ALTER TABLE nodes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        # La colonne existe déjà
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE measurements ADD COLUMN signal_rssi INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS measurements (
@@ -37,11 +50,17 @@ def init_db() -> None:
             temperature_internal_c REAL,
             battery_v REAL,
             battery_pct REAL,
+            signal_rssi INTEGER,
             measured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (node_id) REFERENCES nodes(id)
         )
         """
     )
+    # Index pour accélérer les requêtes latest_measurements et l'historique
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_measurements_node_date ON measurements (node_id, measured_at DESC)"
+    )
+    
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS settings (
