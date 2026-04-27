@@ -53,6 +53,7 @@ class MeshcoreClient:
             shlex.split(command),
             capture_output=True,
             text=True,
+            stderr=subprocess.STDOUT,
             timeout=timeout,
             check=False,
         )
@@ -81,13 +82,10 @@ class MeshcoreClient:
             shlex.split(command),
             capture_output=True,
             text=True,
+            stderr=subprocess.STDOUT,
             timeout=timeout,
             check=False,
         )
-        if completed.returncode != 0:
-            self.connected = False
-            self.last_error = completed.stderr.strip() or "meshcore-cli failed"
-            raise RuntimeError(self.last_error)
         return completed.stdout
 
     def ensure_connection(self, preferred_port: str | None = None) -> bool:
@@ -176,6 +174,8 @@ class MeshcoreClient:
                 q_pwd = shlex.quote(password)
                 rt_attempts.extend([f"{prefix} login {q_login} {q_pwd} rt {nid}" for nid in ids])
 
+        rt_attempts.extend([f"{prefix} rt {nid}" for nid in ids])
+        rt_attempts.extend([f"{prefix} -j rt {nid}" for nid in ids])
         rt_attempts.extend([f"{prefix} req_telemetry {nid}" for nid in ids])
         rt_attempts.extend([f"{prefix} -j req_telemetry {nid}" for nid in ids])
 
