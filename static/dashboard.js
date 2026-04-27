@@ -16,7 +16,6 @@ let gaugeSettings = {
   tempMin: -10,
   tempMax: 120
 };
-let isDragging = false;
 
 function gauge(divId, title, value, suffix, min, max, color) {
   Plotly.newPlot(divId, [{
@@ -213,8 +212,6 @@ async function openChartModalForNode(node) {
 }
 
 async function render() {
-  if (isDragging) return;
-
   const grid = document.getElementById("node-grid");
   const [latest, settings] = await Promise.all([
     fetchJson("/api/latest"),

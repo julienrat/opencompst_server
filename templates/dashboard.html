@@ -1,13 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-  .node-card { cursor: grab; }
-  .node-card:active { cursor: grabbing; }
-  .sortable-ghost {
-    opacity: 0.4;
-    background-color: #2d3748 !important;
-    border: 2px dashed #4a5568 !important;
-  }
 </style>
 <section class="panel">
   <h2>Vue temps reel des composts</h2>
@@ -38,36 +31,5 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/fr.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script src="/static/dashboard.js"></script>
-<script>
-  // Initialisation du Drag & Drop sur la grille des noeuds
-  document.addEventListener('DOMContentLoaded', () => {
-    const grid = document.getElementById('node-grid');
-    
-    new Sortable(grid, {
-      animation: 150,
-      ghostClass: 'sortable-ghost', // Classe CSS pendant le déplacement
-      onStart: function() {
-        isDragging = true;
-      },
-      onEnd: function() {
-        isDragging = false;
-        // On récupère tous les éléments enfants qui ont un data-node-id
-        const cards = grid.querySelectorAll('[data-node-id]');
-        const orders = Array.from(cards).map((card, index) => ({
-          id: parseInt(card.getAttribute('data-node-id')),
-          order: index
-        }));
-
-        // Envoi du nouvel ordre au serveur
-        fetch('/api/nodes/reorder', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(orders)
-        }).catch(err => console.error("Erreur lors de la sauvegarde de l'ordre:", err));
-      }
-    });
-  });
-</script>
 {% endblock %}
