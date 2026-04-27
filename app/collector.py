@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from .meshcore_client import MeshcoreClient
 from .mqtt_publisher import MqttPublisher
-from .repository import get_setting, insert_measurement, list_nodes
+from .repository import get_all_settings, get_setting, insert_measurements, list_nodes
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +56,18 @@ class TelemetryCollector:
         Version synchrone de la collecte pour exécution en thread.
         Regroupe toute la logique d'interrogation et de stockage.
         """
-        preferred_port = get_setting("meshcore_port", "")
+        settings = get_all_settings()
+        preferred_port = settings.get("meshcore_port", "")
         if not self.client.ensure_connection(preferred_port=preferred_port or None):
             logger.warning("MeshCore USB indisponible: %s", self.client.status().get("last_error"))
             return
 
         nodes = list_nodes(enabled_only=True)
-        repeater_login_node = get_setting("repeater_login_node", "")
-        repeater_password = get_setting("repeater_password", "")
+        repeater_login_node = settings.get("repeater_login_node", "")
+        repeater_password = settings.get("repeater_password", "")
         mqtt_nodes_payload: dict[str, dict[str, float | None]] = {}
+        measurements_to_save = []
+
         for node in nodes:
             mesh_id = node["mesh_id"]
             try:
@@ -77,14 +80,16 @@ class TelemetryCollector:
                 if not any(v is not None for v in data.values()):
                     logger.info("No telemetry returned for node %s on this cycle", mesh_id)
                     continue
-                insert_measurement(
-                    node_id=node["id"],
-                    temperature_external_c=data.get("temperature_external_c"),
-                    temperature_internal_c=data.get("temperature_internal_c"),
-                    battery_v=data.get("battery_v"),
-                    battery_pct=data.get("battery_pct"),
-                    signal_rssi=data.get("signal_rssi"),
-                )
+
+                measurements_to_save.append({
+                    "node_id": node["id"],
+                    "temperature_external_c": data.get("temperature_external_c"),
+                    "temperature_internal_c": data.get("temperature_internal_c"),
+                    "battery_v": data.get("battery_v"),
+                    "battery_pct": data.get("battery_pct"),
+                    "signal_rssi": data.get("signal_rssi"),
+                })
+
                 node_name = (node.get("name") or "").strip() or mesh_id
                 mqtt_nodes_payload[node_name] = {
                     "temperature_external_c": data.get("temperature_external_c"),
@@ -95,18 +100,21 @@ class TelemetryCollector:
             except Exception as exc:
                 logger.warning("Read failed for node %s: %s", mesh_id, exc)
 
-        if mqtt_nodes_payload:
-            self._publish_mqtt(mqtt_nodes_payload)
+        if measurements_to_save:
+            insert_measurements(measurements_to_save)
 
-    def _publish_mqtt(self, nodes_payload: dict[str, dict[str, float | None]]) -> None:
-        if get_setting("mqtt_enabled", "0") != "1":
+        if mqtt_nodes_payload:
+            self._publish_mqtt(mqtt_nodes_payload, settings)
+
+    def _publish_mqtt(self, nodes_payload: dict[str, dict[str, float | None]], settings: dict[str, str]) -> None:
+        if settings.get("mqtt_enabled", "0") != "1":
             return
-        host = get_setting("mqtt_host", "").strip()
-        topic = get_setting("mqtt_topic", "").strip()
+        host = settings.get("mqtt_host", "").strip()
+        topic = settings.get("mqtt_topic", "").strip()
         if not host or not topic:
             return
 
-        raw_port = get_setting("mqtt_port", "1883").strip()
+        raw_port = settings.get("mqtt_port", "1883").strip()
         try:
             port = int(raw_port)
         except ValueError:
@@ -123,8 +131,8 @@ class TelemetryCollector:
                 port=port,
                 topic=topic,
                 payload=payload,
-                username=get_setting("mqtt_username", "").strip(),
-                password=get_setting("mqtt_password", ""),
+                username=settings.get("mqtt_username", "").strip(),
+                password=settings.get("mqtt_password", ""),
             )
         except Exception as exc:
             logger.warning("MQTT publish failed: %s", exc)

@@ -104,6 +104,36 @@ def insert_measurement(
     conn.commit()
     conn.close()
 
+def insert_measurements(records: list[dict[str, Any]]) -> None:
+    """Insère plusieurs mesures dans une seule transaction pour économiser la carte SD."""
+    if not records:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cursor.executemany(
+        """
+        INSERT INTO measurements(
+            node_id, temperature_external_c, temperature_internal_c, battery_v, battery_pct, signal_rssi, measured_at
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                r["node_id"],
+                r.get("temperature_external_c"),
+                r.get("temperature_internal_c"),
+                r.get("battery_v"),
+                r.get("battery_pct"),
+                r.get("signal_rssi"),
+                r.get("measured_at", now_iso),
+            )
+            for r in records
+        ],
+    )
+    conn.commit()
+    conn.close()
+
 
 def latest_measurements() -> list[dict[str, Any]]:
     conn = get_connection()
@@ -169,6 +199,15 @@ def get_setting(key: str, default: str) -> str:
     row = cursor.fetchone()
     conn.close()
     return row["value"] if row else default
+
+def get_all_settings() -> dict[str, str]:
+    """Récupère tous les réglages en une seule lecture."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM settings")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row["key"]: row["value"] for row in rows}
 
 
 def set_setting(key: str, value: str) -> None:
