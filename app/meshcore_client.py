@@ -4,14 +4,16 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
 
 class MeshcoreClient:
-    def __init__(self, binary: str = "meshcore-cli") -> None:
-        self.binary = binary
+    def __init__(self, binary: str | None = None) -> None:
+        # Auto-détection du binaire : meshcore-cli ou meshcli
+        self.binary = binary or shutil.which("meshcore-cli") or shutil.which("meshcli") or "meshcore-cli"
         self.port: str | None = None
         self.connected: bool = False
         self.last_error: str = ""
@@ -54,19 +56,23 @@ class MeshcoreClient:
             timeout=timeout,
             check=False,
         )
-        if completed.returncode != 0:
-            self.connected = False
-            self.last_error = completed.stderr.strip() or "meshcore-cli failed"
-            raise RuntimeError(self.last_error)
         output = completed.stdout.strip()
-        if not output:
-            return {}
+
+        # On tente de parser le JSON même si le code de retour est différent de 0,
+        # car la CLI peut retourner des avertissements (ex: Unknown contact)
+        # tout en fournissant les données valides en sortie.
         try:
+            if not output:
+                raise json.JSONDecodeError("Empty output", "", 0)
             return json.loads(output)
         except json.JSONDecodeError:
             # La CLI peut imprimer des logs INFO avant le JSON.
             extracted = self._extract_json_from_output(output)
             if extracted is None:
+                if completed.returncode != 0:
+                    self.connected = False
+                    self.last_error = completed.stderr.strip() or "meshcore-cli failed"
+                    raise RuntimeError(self.last_error)
                 raise
             return extracted
 
