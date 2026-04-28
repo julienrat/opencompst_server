@@ -215,6 +215,75 @@ class MeshcoreClient:
                     continue  # Essaie la commande RS suivante
         return parsed
 
+    def read_bulk_telemetry(self, nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """
+        Optimisation : récupère la télémétrie de tous les noeuds en une seule commande.
+        Retourne un dictionnaire {mesh_id: data_dict}
+        """
+        if not nodes:
+            return {}
+
+        prefix = self._prefix()
+        # On construit la ligne : meshcli -s ... rt noeud1 rt noeud2 rs noeud1 rs noeud2
+        rt_parts = [f"rt {shlex.quote(n['mesh_id'])}" for n in nodes]
+        rs_parts = [f"rs {shlex.quote(n['mesh_id'])}" for n in nodes]
+        command = f"{prefix} " + " ".join(rt_parts + rs_parts)
+
+        results = {n['mesh_id']: {
+            "temperature_external_c": None,
+            "temperature_internal_c": None,
+            "battery_v": None,
+            "battery_pct": None,
+            "signal_rssi": None,
+        } for n in nodes}
+
+        # Table de correspondance pour lier pubkey_pre -> mesh_id
+        pubkey_to_meshid = {}
+
+        try:
+            # On augmente le timeout proportionnellement au nombre de noeuds
+            completed = self._run_command(command, timeout=10 + (len(nodes) * 5))
+            if completed.returncode != 0:
+                # On ne bloque pas car le JSON peut être présent malgré des erreurs mineures
+                pass
+            
+            # On extrait TOUS les blocs JSON de la sortie
+            json_blocks = self._extract_all_json_from_output(completed.stdout)
+            
+            for block in json_blocks:
+                parsed = self._parse_telemetry(block)
+                
+                # Identification du noeud
+                # 1. Par le nom direct (présent dans les blocs 'rt')
+                node_name = block.get("name") or block.get("mesh_id")
+                pubkey = block.get("pubkey_pre")
+                
+                target_id = None
+                if node_name and node_name in results:
+                    target_id = node_name
+                    # On mémorise la pubkey pour les futurs blocs 'rs'
+                    if pubkey:
+                        pubkey_to_meshid[pubkey] = target_id
+                        if len(pubkey) > 8: # Mémorise aussi la version courte (prefixe)
+                            pubkey_to_meshid[pubkey[:12]] = target_id
+                
+                # 2. Par la pubkey (cas des blocs 'rs' qui n'ont pas de 'name')
+                if not target_id and pubkey in pubkey_to_meshid:
+                    target_id = pubkey_to_meshid[pubkey]
+                
+                if target_id:
+                    # Fusion des données récupérées dans ce bloc
+                    results[target_id].update({k: v for k, v in parsed.items() if v is not None})
+            
+            self.connected = True
+            self.last_error = ""
+            self.last_ok_at = datetime.now(timezone.utc).isoformat()
+        except Exception as e:
+            self.last_error = f"Bulk read failed: {e}"
+            logger.error(self.last_error)
+
+        return results
+
     def list_devices(self) -> list[str]:
         """List available BLE/serial devices via meshcore-cli -l."""
         attempts = [
@@ -468,6 +537,25 @@ class MeshcoreClient:
             return json.loads(candidate)
         except json.JSONDecodeError:
             return None
+
+    def _extract_all_json_from_output(self, output: str) -> list[dict]:
+        """Recherche et extrait tous les objets JSON valides dans une chaîne de texte."""
+        results = []
+        depth = 0
+        start = -1
+        for i, char in enumerate(output):
+            if char == '{':
+                if depth == 0: start = i
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0 and start != -1:
+                    candidate = output[start:i+1]
+                    try:
+                        results.append(json.loads(candidate))
+                    except: pass
+                    start = -1
+        return results
 
     def _parse_contacts_text(self, output: str) -> list[dict[str, str]]:
         nodes: list[dict[str, str]] = []

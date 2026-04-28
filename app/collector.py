@@ -68,35 +68,33 @@ class TelemetryCollector:
         mqtt_nodes_payload: dict[str, dict[str, float | None]] = {}
         measurements_to_save = []
 
+        # Récupération groupée de toutes les télémétries en une seule ligne de commande
+        bulk_data = self.client.read_bulk_telemetry(nodes)
+
         for node in nodes:
             mesh_id = node["mesh_id"]
-            try:
-                data = self.client.read_telemetry(
-                    mesh_id=mesh_id,
-                    node_type=node.get("node_type", "CLI"),
-                )
-                if not any(v is not None for v in data.values()):
-                    logger.info("No telemetry returned for node %s on this cycle", mesh_id)
-                    continue
+            data = bulk_data.get(mesh_id)
+            
+            if not data or not any(v is not None for v in data.values()):
+                logger.info("No telemetry returned for node %s on this bulk cycle", mesh_id)
+                continue
 
-                measurements_to_save.append({
-                    "node_id": node["id"],
-                    "temperature_external_c": data.get("temperature_external_c"),
-                    "temperature_internal_c": data.get("temperature_internal_c"),
-                    "battery_v": data.get("battery_v"),
-                    "battery_pct": data.get("battery_pct"),
-                    "signal_rssi": data.get("signal_rssi"),
-                })
+            measurements_to_save.append({
+                "node_id": node["id"],
+                "temperature_external_c": data.get("temperature_external_c"),
+                "temperature_internal_c": data.get("temperature_internal_c"),
+                "battery_v": data.get("battery_v"),
+                "battery_pct": data.get("battery_pct"),
+                "signal_rssi": data.get("signal_rssi"),
+            })
 
-                node_name = (node.get("name") or "").strip() or mesh_id
-                mqtt_nodes_payload[node_name] = {
-                    "temperature_external_c": data.get("temperature_external_c"),
-                    "temperature_internal_c": data.get("temperature_internal_c"),
-                    "battery_v": data.get("battery_v"),
-                    "battery_pct": data.get("battery_pct"),
-                }
-            except Exception as exc:
-                logger.warning("Read failed for node %s: %s", mesh_id, exc)
+            node_name = (node.get("name") or "").strip() or mesh_id
+            mqtt_nodes_payload[node_name] = {
+                "temperature_external_c": data.get("temperature_external_c"),
+                "temperature_internal_c": data.get("temperature_internal_c"),
+                "battery_v": data.get("battery_v"),
+                "battery_pct": data.get("battery_pct"),
+            }
 
         if measurements_to_save:
             insert_measurements(measurements_to_save)
