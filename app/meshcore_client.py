@@ -159,12 +159,9 @@ class MeshcoreClient:
         self,
         mesh_id: str,
         node_type: str = "CLI",
-        repeater_login_node: str | None = None,
-        repeater_password: str | None = None,
     ) -> dict[str, float | None]:
         prefix = self._prefix()
         ids = self._candidate_node_ids(mesh_id)
-        node_kind = (node_type or "CLI").upper()
 
         parsed = {
             "temperature_external_c": None,
@@ -176,14 +173,6 @@ class MeshcoreClient:
 
         # 1. Tentatives de Telemetrie (RT)
         rt_attempts: list[str] = []
-        if node_kind == "REP":
-            login_node = (repeater_login_node or "").strip()
-            password = (repeater_password or "").strip()
-            if login_node and password:
-                q_login = shlex.quote(login_node)
-                q_pwd = shlex.quote(password)
-                rt_attempts.extend([f"{prefix} login {q_login} {q_pwd} rt {nid}" for nid in ids])
-
         rt_attempts.extend([f"{prefix} rt {nid}" for nid in ids])  # Commande courte confirmée
 
         for cmd in rt_attempts:
@@ -203,11 +192,6 @@ class MeshcoreClient:
         # 2. Tentatives de Signal (RS) si le RSSI est manquant
         if parsed["signal_rssi"] is None:
             rs_attempts: list[str] = []
-            if node_kind == "REP" and repeater_login_node and repeater_password:
-                q_login = shlex.quote(repeater_login_node.strip())
-                q_pwd = shlex.quote(repeater_password.strip())
-                rs_attempts.extend([f"{prefix} login {q_login} {q_pwd} rs {nid}" for nid in ids])
-            
             rs_attempts.extend([f"{prefix} rs {nid}" for nid in ids])
             rs_attempts.extend([f"{prefix} -j rs {nid}" for nid in ids])
 

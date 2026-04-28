@@ -82,18 +82,6 @@ def init_db() -> None:
     cursor.execute(
         """
         INSERT OR IGNORE INTO settings(key, value)
-        VALUES ('repeater_login_node', '')
-        """
-    )
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO settings(key, value)
-        VALUES ('repeater_password', '')
-        """
-    )
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO settings(key, value)
         VALUES ('gauge_temp_min', '-10')
         """
     )

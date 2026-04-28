@@ -63,8 +63,6 @@ class TelemetryCollector:
             return
 
         nodes = list_nodes(enabled_only=True)
-        repeater_login_node = settings.get("repeater_login_node", "")
-        repeater_password = settings.get("repeater_password", "")
         mqtt_nodes_payload: dict[str, dict[str, float | None]] = {}
         measurements_to_save = []
 
@@ -74,8 +72,6 @@ class TelemetryCollector:
                 data = self.client.read_telemetry(
                     mesh_id=mesh_id,
                     node_type=node.get("node_type", "CLI"),
-                    repeater_login_node=repeater_login_node,
-                    repeater_password=repeater_password,
                 )
                 if not any(v is not None for v in data.values()):
                     logger.info("No telemetry returned for node %s on this cycle", mesh_id)

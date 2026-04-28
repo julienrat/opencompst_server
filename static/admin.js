@@ -20,8 +20,6 @@ function fmtDate(iso) {
 function collectSettingsFromForm() {
   return {
     poll_interval_seconds: Number(document.getElementById("poll-interval").value),
-    repeater_login_node: document.getElementById("repeater-login-node").value.trim(),
-    repeater_password: document.getElementById("repeater-password").value,
     gauge_temp_min: Number(document.getElementById("gauge-temp-min").value),
     gauge_temp_max: Number(document.getElementById("gauge-temp-max").value),
     mqtt_host: document.getElementById("mqtt-host").value.trim(),
@@ -145,8 +143,6 @@ async function refreshNodes() {
 async function refreshSettings() {
   const settings = await fetchJson("/api/settings");
   document.getElementById("poll-interval").value = settings.poll_interval_seconds;
-  document.getElementById("repeater-login-node").value = settings.repeater_login_node || "";
-  document.getElementById("repeater-password").value = settings.repeater_password || "";
   document.getElementById("gauge-temp-min").value = settings.gauge_temp_min ?? -10;
   document.getElementById("gauge-temp-max").value = settings.gauge_temp_max ?? 120;
   document.getElementById("mqtt-host").value = settings.mqtt_host || "";
@@ -257,8 +253,6 @@ document.getElementById("mqtt-enabled").addEventListener("change", updateMqttCar
 
 [
   "poll-interval",
-  "repeater-login-node",
-  "repeater-password",
   "gauge-temp-min",
   "gauge-temp-max",
   "mqtt-host",

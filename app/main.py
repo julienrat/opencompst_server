@@ -42,8 +42,6 @@ class NodeUpdate(BaseModel):
 
 class SettingsUpdate(BaseModel):
     poll_interval_seconds: int = Field(ge=5, le=3600)
-    repeater_login_node: str = ""
-    repeater_password: str = ""
     gauge_temp_min: float = -10
     gauge_temp_max: float = 120
     mqtt_host: str = ""
@@ -118,8 +116,6 @@ async def api_settings() -> dict:
     return {
         "poll_interval_seconds": int(get_setting("poll_interval_seconds", "60")),
         "meshcore_port": get_setting("meshcore_port", ""),
-        "repeater_login_node": get_setting("repeater_login_node", ""),
-        "repeater_password": get_setting("repeater_password", ""),
         "gauge_temp_min": float(get_setting("gauge_temp_min", "-10")),
         "gauge_temp_max": float(get_setting("gauge_temp_max", "120")),
         "mqtt_host": get_setting("mqtt_host", ""),
@@ -136,8 +132,6 @@ async def api_update_settings(payload: SettingsUpdate) -> dict:
     if payload.gauge_temp_min >= payload.gauge_temp_max:
         raise HTTPException(status_code=400, detail="gauge_temp_min must be lower than gauge_temp_max")
     set_setting("poll_interval_seconds", str(payload.poll_interval_seconds))
-    set_setting("repeater_login_node", payload.repeater_login_node.strip())
-    set_setting("repeater_password", payload.repeater_password)
     set_setting("gauge_temp_min", str(payload.gauge_temp_min))
     set_setting("gauge_temp_max", str(payload.gauge_temp_max))
     set_setting("mqtt_host", payload.mqtt_host.strip())
@@ -148,7 +142,6 @@ async def api_update_settings(payload: SettingsUpdate) -> dict:
     set_setting("mqtt_enabled", "1" if payload.mqtt_enabled else "0")
     return {
         "poll_interval_seconds": payload.poll_interval_seconds,
-        "repeater_login_node": payload.repeater_login_node.strip(),
         "gauge_temp_min": payload.gauge_temp_min,
         "gauge_temp_max": payload.gauge_temp_max,
         "mqtt_host": payload.mqtt_host.strip(),
