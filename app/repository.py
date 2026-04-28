@@ -38,12 +38,12 @@ def upsert_node(mesh_id: str, name: str | None = None, node_type: str = "CLI") -
     return row
 
 
-def update_node(node_id: int, name: str | None, enabled: bool) -> dict[str, Any] | None:
+def update_node(node_id: int, name: str | None, enabled: bool, node_type: str = "CLI") -> dict[str, Any] | None:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE nodes SET name = ?, enabled = ? WHERE id = ?",
-        (name, 1 if enabled else 0, node_id),
+        "UPDATE nodes SET name = ?, enabled = ?, node_type = ? WHERE id = ?",
+        (name, 1 if enabled else 0, node_type, node_id),
     )
     conn.commit()
     cursor.execute("SELECT * FROM nodes WHERE id = ?", (node_id,))

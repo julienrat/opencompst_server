@@ -79,7 +79,12 @@ async function refreshNodes() {
         <tr data-node-id="${n.id}">
           <td class="drag-handle">☰</td>
           <td>${n.mesh_id}</td>
-          <td>${n.node_type || "CLI"}</td>
+          <td>
+            <select data-type-id="${n.id}">
+              <option value="CLI" ${n.node_type === 'CLI' ? 'selected' : ''}>CLI</option>
+              <option value="REP" ${n.node_type === 'REP' ? 'selected' : ''}>REP</option>
+            </select>
+          </td>
           <td><input data-name-id="${n.id}" value="${n.name ?? ""}" placeholder="Nom du noeud"></td>
           <td>${n.enabled ? '<span class="status-ok">Oui</span>' : '<span class="status-off">Non</span>'}</td>
           <td>
@@ -98,10 +103,11 @@ async function refreshNodes() {
       const id = btn.dataset.saveId;
       const name = container.querySelector(`input[data-name-id="${id}"]`).value;
       const enabled = container.querySelector(`input[data-enabled-id="${id}"]`).checked;
+      const node_type = container.querySelector(`select[data-type-id="${id}"]`).value;
       await fetchJson(`/api/nodes/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, enabled })
+        body: JSON.stringify({ name, enabled, node_type })
       });
       refreshNodes().catch(console.error);
     });
