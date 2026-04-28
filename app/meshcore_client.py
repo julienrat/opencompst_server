@@ -13,7 +13,7 @@ from typing import Any
 class MeshcoreClient:
     def __init__(self, binary: str | None = None) -> None:
         # Auto-détection du binaire : meshcore-cli ou meshcli
-        self.binary = binary or shutil.which("meshcore-cli") or shutil.which("meshcli") or "meshcore-cli"
+        self.binary = binary or shutil.which("meshcli") or shutil.which("meshcore-cli") or "meshcli"
         self.port: str | None = None
         self.connected: bool = False
         self.last_error: str = ""
@@ -48,45 +48,42 @@ class MeshcoreClient:
             return f"{self.binary} -s {shlex.quote(env_port)}"
         return self.binary
 
-    def _run_json(self, command: str, timeout: int = 10) -> Any:
-        completed = subprocess.run(
+    def _run_command(self, command: str, timeout: int = 10) -> subprocess.CompletedProcess:
+        """Exécute une commande meshcore-cli et retourne l'objet CompletedProcess."""
+        return subprocess.run(
             shlex.split(command),
-            capture_output=True,
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT,  # Fusionne stderr dans stdout pour faciliter le parsing
             text=True,
-            stderr=subprocess.STDOUT,
             timeout=timeout,
-            check=False,
+            check=False,  # On gère le code de retour manuellement
         )
-        output = completed.stdout.strip()
 
-        # On tente de parser le JSON même si le code de retour est différent de 0,
-        # car la CLI peut retourner des avertissements (ex: Unknown contact)
-        # tout en fournissant les données valides en sortie.
+    def _parse_json_output(self, completed: subprocess.CompletedProcess) -> Any:
+        """Tente de parser la sortie d'une commande en JSON, gérant les logs parasites."""
+        output = completed.stdout.strip()
+        if not output:
+            raise json.JSONDecodeError("Empty output from command", "", 0)
+
         try:
-            if not output:
-                raise json.JSONDecodeError("Empty output", "", 0)
             return json.loads(output)
         except json.JSONDecodeError:
-            # La CLI peut imprimer des logs INFO avant le JSON.
             extracted = self._extract_json_from_output(output)
             if extracted is None:
-                if completed.returncode != 0:
-                    self.connected = False
-                    self.last_error = completed.stderr.strip() or "meshcore-cli failed"
-                    raise RuntimeError(self.last_error)
-                raise
+                raise json.JSONDecodeError(f"No valid JSON found in output: {output}", output, 0)
             return extracted
 
+    def _parse_text_output(self, completed: subprocess.CompletedProcess) -> str:
+        """Retourne la sortie texte d'une commande."""
+        return completed.stdout.strip()
+
+    def _run_json(self, command: str, timeout: int = 10) -> Any:
+        completed = self._run_command(command, timeout)
+        return self._parse_json_output(completed)
+
     def _run_text(self, command: str, timeout: int = 10) -> str:
-        completed = subprocess.run(
-            shlex.split(command),
-            capture_output=True,
-            text=True,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            check=False,
-        )
-        return completed.stdout
+        completed = self._run_command(command, timeout)
+        return self._parse_text_output(completed)
 
     def ensure_connection(self, preferred_port: str | None = None) -> bool:
         """Auto-reconnect to preferred USB port, then fallback to detected ports."""
@@ -134,15 +131,18 @@ class MeshcoreClient:
         # Commande valide fournie: meshcli -s /dev/ttyACM0 lc
         for cmd in (f"{prefix} lc", f"{prefix} contacts"):
             try:
-                output = self._run_text(cmd, timeout=15)
-                nodes = self._parse_contacts_text(output)
-                if nodes:
-                    self.connected = True
-                    self.last_error = ""
-                    self.last_ok_at = datetime.now(timezone.utc).isoformat()
-                    return nodes
-            except Exception:
-                continue
+                completed = self._run_command(cmd, timeout=15)
+                if completed.returncode == 0:  # La commande doit réussir
+                    output = self._parse_text_output(completed)
+                    nodes = self._parse_contacts_text(output)
+                    if nodes:
+                        self.connected = True
+                        self.last_error = ""
+                        self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                        return nodes
+            except Exception as e:
+                self.last_error = str(e)  # Stocke la dernière erreur pour le statut
+                continue  # Essaie la commande suivante
         return []
 
     def read_telemetry(
@@ -181,13 +181,17 @@ class MeshcoreClient:
 
         for cmd in rt_attempts:
             try:
-                payload = self._run_json(cmd)
-                data = self._parse_telemetry(payload)
-                if any(v is not None for v in data.values()):
-                    parsed.update({k: v for k, v in data.items() if v is not None})
-                    break
-            except Exception:
-                continue
+                completed = self._run_command(cmd)
+                if completed.returncode == 0:  # La commande doit réussir pour la télémétrie
+                    payload = self._parse_json_output(completed)
+                    data = self._parse_telemetry(payload)
+                    if any(v is not None for v in data.values()):
+                        parsed.update({k: v for k, v in data.items() if v is not None})
+                        self.connected = True; self.last_error = ""; self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                        break  # Arrête après la première commande RT réussie
+            except Exception as e:
+                self.last_error = str(e)
+                continue  # Essaie la commande RT suivante
 
         # 2. Tentatives de Signal (RS) si le RSSI est manquant
         if parsed["signal_rssi"] is None:
@@ -202,21 +206,22 @@ class MeshcoreClient:
 
             for cmd in rs_attempts:
                 try:
-                    # On utilise _run_text car rs renvoie souvent juste un nombre ou "RSSI: -85"
-                    output = self._run_text(cmd)
-                    sig_data = self._parse_telemetry(output)
-                    if sig_data["signal_rssi"] is not None:
-                        parsed["signal_rssi"] = sig_data["signal_rssi"]
-                        break
-                except Exception:
-                    continue
+                    completed = self._run_command(cmd)
+                    if completed.returncode == 0:  # La commande doit réussir pour le signal
+                        # rs peut renvoyer du JSON ou du texte simple
+                        try:
+                            payload = self._parse_json_output(completed)
+                        except json.JSONDecodeError:
+                            payload = self._parse_text_output(completed)
 
-        if any(v is not None for v in parsed.values()):
-            self.connected = True
-            self.last_error = ""
-            self.last_ok_at = datetime.now(timezone.utc).isoformat()
-            return parsed
-
+                        sig_data = self._parse_telemetry(payload)
+                        if sig_data["signal_rssi"] is not None:
+                            parsed["signal_rssi"] = sig_data["signal_rssi"]
+                            self.connected = True; self.last_error = ""; self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                            break  # Arrête après la première commande RS réussie
+                except Exception as e:
+                    self.last_error = str(e)
+                    continue  # Essaie la commande RS suivante
         return parsed
 
     def list_devices(self) -> list[str]:
@@ -227,17 +232,11 @@ class MeshcoreClient:
         ]
         for cmd in attempts:
             try:
-                completed = subprocess.run(
-                    shlex.split(cmd),
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                )
-                if completed.returncode != 0:
-                    continue
-                return self._parse_devices_output(completed.stdout)
-            except Exception:
+                completed = self._run_command(cmd, timeout=10)
+                if completed.returncode == 0:  # La commande doit réussir
+                    return self._parse_devices_output(self._parse_text_output(completed))
+            except Exception as e:
+                self.last_error = str(e)
                 continue
         return []
 
@@ -253,16 +252,26 @@ class MeshcoreClient:
         ]
         for cmd in attempts:
             try:
-                if " -j " in cmd:
-                    self._run_json(cmd, timeout=5)
-                else:
-                    self._run_text(cmd, timeout=5)
-                self.connected = True
-                self.last_error = ""
-                self.last_ok_at = datetime.now(timezone.utc).isoformat()
-                return True
-            except Exception:
-                continue
+                completed = self._run_command(cmd, timeout=5)
+                if completed.returncode == 0:  # La commande doit réussir
+                    if " -j " in cmd:
+                        result = self._parse_json_output(completed)
+                        if result:  # Si on a du JSON valide, c'est un succès
+                            self.connected = True
+                            self.last_error = ""
+                            self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                            return True
+                    else:
+                        output = self._parse_text_output(completed)
+                        # Pour 'lc' ou 'contacts', on s'attend à une sortie non vide et structurée
+                        if " " in output and len(output.splitlines()) > 1:
+                            self.connected = True
+                            self.last_error = ""
+                            self.last_ok_at = datetime.now(timezone.utc).isoformat()
+                            return True
+            except Exception as e:
+                self.last_error = str(e)  # Stocke la dernière erreur rencontrée
+                continue  # Essaie la commande suivante
         self.connected = False
         if not self.last_error:
             self.last_error = "Echec test connexion USB meshcore"
