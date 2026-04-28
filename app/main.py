@@ -38,7 +38,6 @@ collector = TelemetryCollector(meshcore)
 class NodeUpdate(BaseModel):
     name: str | None = None
     enabled: bool = True
-    node_type: str = "CLI"
 
 
 class SettingsUpdate(BaseModel):
@@ -86,12 +85,17 @@ async def api_nodes(enabled_only: bool = False) -> list[dict]:
     return list_nodes(enabled_only=enabled_only)
 
 
+@app.put("/api/nodes/reorder")
+async def api_reorder_nodes(payload: list[dict[str, int]]) -> dict:
+    update_nodes_order(payload)
+    return {"status": "ok"}
+
+
 @app.post("/api/nodes/discover")
 async def api_discover_nodes() -> dict:
     discovered = meshcore.discover_nodes()
     stored = [upsert_node(n["mesh_id"], n.get("name"), n.get("node_type", "CLI")) for n in discovered]
     return {"count": len(stored), "nodes": stored}
-
 
 @app.put("/api/nodes/{node_id}")
 async def api_update_node(node_id: int, payload: NodeUpdate) -> dict:
