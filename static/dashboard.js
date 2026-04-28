@@ -221,7 +221,12 @@ async function render() {
 
   // On récupère toutes les séries en parallèle pour éviter de bloquer la boucle
   const allSeries = await Promise.all(
-    latest.map(n => fetchJson(`/api/measurements/${n.node_id}?hours=24`))
+    latest.map(n => 
+      fetchJson(`/api/measurements/${n.node_id}?hours=24`).catch(err => {
+        console.warn(`Impossible de charger les mesures pour ${n.label}`, err);
+        return { node_id: n.node_id, series: [] };
+      })
+    )
   );
 
   gaugeSettings.tempMin = Number(settings.gauge_temp_min ?? -10);
@@ -315,5 +320,14 @@ async function monitorMeshcoreStatus() {
 setupModalPickers();
 initModalEvents();
 render().catch(console.error);
-setInterval(() => render().catch(console.error), 30000);
+
+setInterval(() => {
+  render().catch(console.error);
+  // Rafraîchir le graphique historique s'il est visible
+  const modal = document.getElementById("chart-modal");
+  if (modal && !modal.classList.contains("hidden")) {
+    refreshModalChart().catch(console.error);
+  }
+}, 30000);
+
 setInterval(monitorMeshcoreStatus, 5000);

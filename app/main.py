@@ -38,6 +38,7 @@ collector = TelemetryCollector(meshcore)
 class NodeUpdate(BaseModel):
     name: str | None = None
     enabled: bool = True
+    node_type: str = "CLI"
 
 
 class SettingsUpdate(BaseModel):
@@ -106,11 +107,6 @@ async def api_delete_node(node_id: int) -> dict:
     if not deleted:
         raise HTTPException(status_code=404, detail="Node not found")
     return {"deleted": True, "node_id": node_id}
-
-@app.put("/api/nodes/reorder")
-async def api_reorder_nodes(payload: list[dict[str, int]]) -> dict:
-    update_nodes_order(payload)
-    return {"status": "ok"}
 
 
 @app.get("/api/settings")
