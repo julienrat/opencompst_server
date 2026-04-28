@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import csv
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -27,7 +28,15 @@ from .repository import (
     upsert_node,
 )
 
-app = FastAPI(title="OpenCompost Telemetry")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    meshcore.set_port(get_setting("meshcore_port", ""))
+    await collector.start()
+    yield
+    await collector.stop()
+
+app = FastAPI(title="OpenCompost Telemetry", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -38,6 +47,7 @@ collector = TelemetryCollector(meshcore)
 class NodeUpdate(BaseModel):
     name: str | None = None
     enabled: bool = True
+    node_type: str = "CLI"
 
 
 class SettingsUpdate(BaseModel):
@@ -54,18 +64,6 @@ class SettingsUpdate(BaseModel):
 
 class PortConnect(BaseModel):
     port: str = Field(min_length=3, max_length=300)
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    init_db()
-    meshcore.set_port(get_setting("meshcore_port", ""))
-    await collector.start()
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    await collector.stop()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -97,7 +95,7 @@ async def api_discover_nodes() -> dict:
 
 @app.put("/api/nodes/{node_id}")
 async def api_update_node(node_id: int, payload: NodeUpdate) -> dict:
-    updated = update_node(node_id, payload.name, payload.enabled)
+    updated = update_node(node_id, payload.name, payload.enabled, payload.node_type)
     if not updated:
         raise HTTPException(status_code=404, detail="Node not found")
     return updated
@@ -155,11 +153,10 @@ async def api_update_settings(payload: SettingsUpdate) -> dict:
 @app.get("/api/ports")
 async def api_ports() -> dict:
     candidates = set()
+    # On fait confiance à la CLI pour la détection primaire
     for port in meshcore.list_devices():
         candidates.add(port)
-    for pattern in ("/dev/ttyUSB*", "/dev/ttyACM*", "/dev/serial/by-id/*"):
-        for device in Path("/").glob(pattern.lstrip("/")):
-            candidates.add(str(device.resolve()) if device.is_symlink() else str(device))
+    
     current = get_setting("meshcore_port", "")
     ports = sorted(candidates)
     if current and current not in ports:

@@ -74,36 +74,6 @@ def update_nodes_order(orders: list[dict[str, int]]) -> None:
     conn.commit()
     conn.close()
 
-def insert_measurement(
-    node_id: int,
-    temperature_external_c: float | None,
-    temperature_internal_c: float | None,
-    battery_v: float | None,
-    battery_pct: float | None,
-    signal_rssi: int | None = None,
-) -> None:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO measurements(
-            node_id, temperature_external_c, temperature_internal_c, battery_v, battery_pct, signal_rssi, measured_at
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            node_id,
-            temperature_external_c,
-            temperature_internal_c,
-            battery_v,
-            battery_pct,
-            signal_rssi,
-            datetime.now(timezone.utc).isoformat(),
-        ),
-    )
-    conn.commit()
-    conn.close()
-
 def insert_measurements(records: list[dict[str, Any]]) -> None:
     """Insère plusieurs mesures dans une seule transaction pour économiser la carte SD."""
     if not records:

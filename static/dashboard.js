@@ -235,12 +235,11 @@ async function render() {
     gaugeSettings.tempMin = -10;
     gaugeSettings.tempMax = 120;
   }
-  grid.innerHTML = "";
+
+  const latestIds = new Set(latest.map(n => String(n.node_id)));
 
   latest.forEach((node, index) => {
-    const card = document.createElement("article");
-    card.className = "node-card";
-    card.dataset.nodeId = node.node_id;
+    let card = grid.querySelector(`.node-card[data-node-id="${node.node_id}"]`);
 
     const rssi = node.signal_rssi;
     let sigText = "Signal inconnu";
@@ -260,7 +259,7 @@ async function render() {
 
     const tempExtDiv = `temp-ext-${node.node_id}`;
     const miniChartDiv = `temp-mini-${node.node_id}`;
-    card.innerHTML = `
+    const cardHtml = `
       <div class="node-card-content">
         <div class="node-card-left">
           <h3>${node.label}</h3>
@@ -282,7 +281,21 @@ async function render() {
         </div>
       </div>
     `;
-    grid.appendChild(card);
+
+    if (!card) {
+      card = document.createElement("article");
+      card.className = "node-card";
+      card.dataset.nodeId = node.node_id;
+      card.innerHTML = cardHtml;
+      grid.appendChild(card);
+    } else {
+      card.innerHTML = cardHtml;
+    }
+
+    // Maintenir l'ordre défini sans reset le scroll de la page
+    if (grid.children[index] !== card) {
+      grid.insertBefore(card, grid.children[index]);
+    }
 
     gauge(
       tempExtDiv,
@@ -300,6 +313,13 @@ async function render() {
     card.querySelector(".node-card-middle").addEventListener("click", () => {
       openChartModalForNode(node).catch(console.error);
     });
+  });
+
+  // Nettoyage des cartes qui ne sont plus présentes dans les données 'latest'
+  Array.from(grid.children).forEach(child => {
+    if (child.dataset.nodeId && !latestIds.has(child.dataset.nodeId)) {
+      grid.removeChild(child);
+    }
   });
 }
 

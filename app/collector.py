@@ -18,6 +18,7 @@ class TelemetryCollector:
         self.mqtt = MqttPublisher()
         self._task: asyncio.Task | None = None
         self._running = False
+        self._poll_interval = 60
 
     async def start(self) -> None:
         if self._running:
@@ -27,6 +28,7 @@ class TelemetryCollector:
 
     async def stop(self) -> None:
         self._running = False
+        self.mqtt.disconnect()
         if self._task:
             self._task.cancel()
             try:
@@ -48,8 +50,7 @@ class TelemetryCollector:
                 await asyncio.to_thread(self.collect_sync)
             except Exception as exc:
                 logger.exception("Collector cycle failed: %s", exc)
-            interval = max(5, int(get_setting("poll_interval_seconds", "60")))
-            await asyncio.sleep(interval)
+            await asyncio.sleep(self._poll_interval)
 
     def collect_sync(self) -> None:
         """
@@ -57,6 +58,7 @@ class TelemetryCollector:
         Regroupe toute la logique d'interrogation et de stockage.
         """
         settings = get_all_settings()
+        self._poll_interval = max(5, int(settings.get("poll_interval_seconds", "60")))
         preferred_port = settings.get("meshcore_port", "")
         if not self.client.ensure_connection(preferred_port=preferred_port or None):
             logger.warning("MeshCore USB indisponible: %s", self.client.status().get("last_error"))
