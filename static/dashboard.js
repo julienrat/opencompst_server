@@ -158,7 +158,7 @@ async function refreshModalChart() {
     end: modalState.end.toISOString()
   });
   const series = await fetchJson(`/api/measurements/${modalState.nodeId}?${params.toString()}`);
-  const x = series.series.map((s) => s.measured_at);
+  const x = series.series.map((s) => new Date(s.measured_at)); // Convertir en objet Date
   const yExt = series.series.map((s) => s.temperature_external_c);
   const yInt = series.series.map((s) => s.temperature_internal_c);
   bigTempChart("modal-chart", x, yExt, yInt, modalState.nodeLabel);
@@ -288,7 +288,7 @@ async function render() {
       "#ff9f43"
     );
     const series = allSeries[index];
-    const x = series.series.map(s => s.measured_at);
+    const x = series.series.map(s => new Date(s.measured_at)); // Convertir en objet Date
     const y = series.series.map(s => s.temperature_external_c);
     miniTempChart(miniChartDiv, x, y);
     card.querySelector(".node-card-middle").addEventListener("click", () => {
