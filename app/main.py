@@ -38,7 +38,6 @@ collector = TelemetryCollector(meshcore)
 class NodeUpdate(BaseModel):
     name: str | None = None
     enabled: bool = True
-    node_type: str = "CLI"
 
 
 class SettingsUpdate(BaseModel):
@@ -95,7 +94,7 @@ async def api_discover_nodes() -> dict:
 
 @app.put("/api/nodes/{node_id}")
 async def api_update_node(node_id: int, payload: NodeUpdate) -> dict:
-    updated = update_node(node_id, payload.name, payload.enabled, payload.node_type)
+    updated = update_node(node_id, payload.name, payload.enabled)
     if not updated:
         raise HTTPException(status_code=404, detail="Node not found")
     return updated

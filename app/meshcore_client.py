@@ -184,10 +184,7 @@ class MeshcoreClient:
                 q_pwd = shlex.quote(password)
                 rt_attempts.extend([f"{prefix} login {q_login} {q_pwd} rt {nid}" for nid in ids])
 
-        rt_attempts.extend([f"{prefix} rt {nid}" for nid in ids])
-        rt_attempts.extend([f"{prefix} -j rt {nid}" for nid in ids])
-        rt_attempts.extend([f"{prefix} req_telemetry {nid}" for nid in ids])
-        rt_attempts.extend([f"{prefix} -j req_telemetry {nid}" for nid in ids])
+        rt_attempts.extend([f"{prefix} rt {nid}" for nid in ids])  # Commande courte confirmée
 
         for cmd in rt_attempts:
             try:
