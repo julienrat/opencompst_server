@@ -20,6 +20,9 @@ class MeshcoreClient:
         self.last_ok_at: str = ""
         self.last_attempt_at: str = ""
         self.reconnect_attempts: int = 0
+        self.last_command: str = ""
+        self.last_output: str = ""
+        self.last_execution_at: str = ""
 
     def set_port(self, port: str | None) -> None:
         self.port = port or None
@@ -34,6 +37,9 @@ class MeshcoreClient:
             "last_ok_at": self.last_ok_at,
             "last_attempt_at": self.last_attempt_at,
             "reconnect_attempts": self.reconnect_attempts,
+            "last_command": self.last_command,
+            "last_output": self.last_output,
+            "last_execution_at": self.last_execution_at,
         }
 
     def mark_disconnected(self, message: str = "USB deconnecte") -> None:
@@ -50,7 +56,9 @@ class MeshcoreClient:
 
     def _run_command(self, command: str, timeout: int = 10) -> subprocess.CompletedProcess:
         """Exécute une commande meshcore-cli et retourne l'objet CompletedProcess."""
-        return subprocess.run(
+        self.last_command = command
+        self.last_execution_at = datetime.now(timezone.utc).isoformat()
+        completed = subprocess.run(
             shlex.split(command),
             stdout=subprocess.PIPE, 
             stderr=subprocess.STDOUT,  # Fusionne stderr dans stdout pour faciliter le parsing
@@ -58,6 +66,8 @@ class MeshcoreClient:
             timeout=timeout,
             check=False,  # On gère le code de retour manuellement
         )
+        self.last_output = completed.stdout
+        return completed
 
     def _parse_json_output(self, completed: subprocess.CompletedProcess) -> Any:
         """Tente de parser la sortie d'une commande en JSON, gérant les logs parasites."""

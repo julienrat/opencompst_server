@@ -8,6 +8,7 @@ async function fetchJson(url, options = {}) {
 
 let savedSettingsSnapshot = "";
 let savedNodesOrderSnapshot = "";
+let lastLoggedExecution = "";
 
 function fmtDate(iso) {
   if (!iso) return "N/A";
@@ -269,6 +270,14 @@ async function refreshMeshcoreStatus() {
   const el = document.getElementById("meshcore-server-status");
   try {
     const s = await fetchJson("/api/meshcore/status");
+
+    if (s.last_command && s.last_execution_at !== lastLoggedExecution) {
+      console.group(`[MeshCLI] ${s.last_command}`);
+      console.log(s.last_output);
+      console.groupEnd();
+      lastLoggedExecution = s.last_execution_at;
+    }
+
     if (s.connected) {
       el.textContent = `Etat MeshCore USB: Connecte sur ${s.port || "N/A"} | Derniere reussite: ${fmtDate(s.last_ok_at)}`;
       el.className = "status-ok";

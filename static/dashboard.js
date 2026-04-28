@@ -16,6 +16,7 @@ let gaugeSettings = {
   tempMin: -10,
   tempMax: 120
 };
+let lastLoggedExecution = "";
 
 function gauge(divId, title, value, suffix, min, max, color) {
   Plotly.newPlot(divId, [{
@@ -297,7 +298,22 @@ async function render() {
   });
 }
 
+async function monitorMeshcoreStatus() {
+  try {
+    const s = await fetchJson("/api/meshcore/status");
+    if (s.last_command && s.last_execution_at !== lastLoggedExecution) {
+      console.group(`[MeshCLI] ${s.last_command}`);
+      console.log(s.last_output);
+      console.groupEnd();
+      lastLoggedExecution = s.last_execution_at;
+    }
+  } catch (e) {
+    // Ignorer silencieusement les erreurs de monitoring
+  }
+}
+
 setupModalPickers();
 initModalEvents();
 render().catch(console.error);
 setInterval(() => render().catch(console.error), 30000);
+setInterval(monitorMeshcoreStatus, 5000);
